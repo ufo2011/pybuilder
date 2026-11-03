@@ -1,23 +1,38 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
-from ...util.path import Path
+from virtualenv.activation.via_template import ViaTemplateActivator
 
-from ..via_template import ViaTemplateActivator
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from python_discovery import PythonInfo
+
+    from virtualenv.create.creator import Creator
 
 
 class BatchActivator(ViaTemplateActivator):
     @classmethod
-    def supports(cls, interpreter):
+    def supports(cls, interpreter: PythonInfo) -> bool:
         return interpreter.os == "nt"
 
-    def templates(self):
-        yield Path("activate.bat")
-        yield Path("deactivate.bat")
-        yield Path("pydoc.bat")
+    def templates(self) -> Iterator[str]:
+        yield "activate.bat"
+        yield "deactivate.bat"
+        yield "pydoc.bat"
 
-    def instantiate_template(self, replacements, template, creator):
+    @staticmethod
+    def quote(string: str) -> str:
+        return string
+
+    def instantiate_template(self, replacements: dict[str, str], template: str, creator: Creator) -> str:
         # ensure the text has all newlines as \r\n - required by batch
-        base = super(BatchActivator, self).instantiate_template(replacements, template, creator)
+        base = super().instantiate_template(replacements, template, creator)
         return base.replace(os.linesep, "\n").replace("\n", os.linesep)
+
+
+__all__ = [
+    "BatchActivator",
+]

@@ -1,59 +1,53 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import logging
 import os
 import shutil
+import sys
 from stat import S_IWUSR
+from typing import TYPE_CHECKING
 
-from ....six import PY2
+if TYPE_CHECKING:
+    from pathlib import Path
 
-from ...info import IS_CPYTHON, IS_WIN
-from ..six import ensure_text
-
-if PY2 and IS_CPYTHON and IS_WIN:  # CPython2 on Windows supports unicode paths if passed as unicode
-
-    def norm(src):
-        return ensure_text(str(src))
+LOGGER = logging.getLogger(__name__)
 
 
-else:
-    norm = str
-
-
-def ensure_dir(path):
+def ensure_dir(path: Path) -> None:
     if not path.exists():
-        logging.debug("create folder %s", ensure_text(str(path)))
-        os.makedirs(norm(path))
+        LOGGER.debug("create folder %s", path)
+        os.makedirs(str(path))
 
 
-def ensure_safe_to_do(src, dest):
+def ensure_safe_to_do(src: Path, dest: Path) -> None:
     if src == dest:
-        raise ValueError("source and destination is the same {}".format(src))
+        msg = f"source and destination is the same {src}"
+        raise ValueError(msg)
     if not dest.exists():
         return
     if dest.is_dir() and not dest.is_symlink():
-        logging.debug("remove directory %s", dest)
+        LOGGER.debug("remove directory %s", dest)
         safe_delete(dest)
     else:
-        logging.debug("remove file %s", dest)
+        LOGGER.debug("remove file %s", dest)
         dest.unlink()
 
 
-def symlink(src, dest):
+def symlink(src: Path, dest: Path) -> None:
     ensure_safe_to_do(src, dest)
-    logging.debug("symlink %s", _Debug(src, dest))
+    LOGGER.debug("symlink %s", _Debug(src, dest))
     dest.symlink_to(src, target_is_directory=src.is_dir())
 
 
-def copy(src, dest):
+def copy(src: Path, dest: Path) -> None:
     ensure_safe_to_do(src, dest)
     is_dir = src.is_dir()
     method = copytree if is_dir else shutil.copy
-    logging.debug("copy %s", _Debug(src, dest))
-    method(norm(src), norm(dest))
+    LOGGER.debug("copy %s", _Debug(src, dest))
+    method(str(src), str(dest))
 
 
-def copytree(src, dest):
+def copytree(src: str, dest: str) -> None:
     for root, _, files in os.walk(src):
         dest_dir = os.path.join(dest, os.path.relpath(root, src))
         if not os.path.isdir(dest_dir):
@@ -64,35 +58,33 @@ def copytree(src, dest):
             shutil.copy(src_f, dest_f)
 
 
-def safe_delete(dest):
-    def onerror(func, path, exc_info):
+def safe_delete(dest: Path) -> None:
+    def onerror(func: object, path: str, exc_info: object) -> None:  # ruff:ignore[unused-function-argument]
         if not os.access(path, os.W_OK):
             os.chmod(path, S_IWUSR)
-            func(path)
+            func(path)  # ty: ignore[call-non-callable]
         else:
-            raise
+            raise  # ruff:ignore[misplaced-bare-raise]
 
-    shutil.rmtree(ensure_text(str(dest)), ignore_errors=True, onerror=onerror)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(str(dest), ignore_errors=True, onexc=onerror)
+    else:
+        shutil.rmtree(str(dest), ignore_errors=True, onerror=onerror)
 
 
-class _Debug(object):
-    def __init__(self, src, dest):
+class _Debug:
+    def __init__(self, src: Path, dest: Path) -> None:
         self.src = src
         self.dest = dest
 
-    def __str__(self):
-        return "{}{} to {}".format(
-            "directory " if self.src.is_dir() else "",
-            ensure_text(str(self.src)),
-            ensure_text(str(self.dest)),
-        )
+    def __str__(self) -> str:
+        return f"{'directory ' if self.src.is_dir() else ''}{self.src!s} to {self.dest!s}"
 
 
-__all__ = (
-    "ensure_dir",
-    "symlink",
+__all__ = [
     "copy",
-    "symlink",
     "copytree",
+    "ensure_dir",
     "safe_delete",
-)
+    "symlink",
+]

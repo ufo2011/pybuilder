@@ -15,7 +15,7 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
-
+import re
 from collections import namedtuple
 
 from pybuilder.core import Dependency, RequirementsFile
@@ -197,8 +197,24 @@ def build_pip_install_options(index_url=None, extra_index_url=None, upgrade=Fals
 
 def create_constraint_file(file_name, constraints):
     with open(file_name, "wt") as fout:
-        for constraint in as_pip_install_target(constraints):
+        for constraint in as_constraints_target(constraints):
             fout.write("%s\n" % constraint)
+
+
+RE_PACKAGE_WITH_EXTRAS = re.compile(r"^([a-zA-Z0-9_]+)\[[^\]]+\](.*)$")
+
+
+def as_constraints_target(mixed):
+    results = []
+
+    for argument in as_pip_install_target(mixed):
+        m = RE_PACKAGE_WITH_EXTRAS.match(argument)
+        if m:
+            results.append(f"{m.group(1)}{m.group(2)}")
+        else:
+            results.append(argument)
+
+    return results
 
 
 def as_pip_install_target(mixed):
@@ -212,7 +228,12 @@ def as_pip_install_target(mixed):
             if target.url:
                 arguments.append(target.url)
             else:
-                arguments.append("{0}{1}".format(target.name, build_dependency_version_string(target)))
+                spec = (f"{target.name}{('[' + ','.join(target.extras) + ']') if target.extras else ''}"
+                        f"{build_dependency_version_string(target)}")
+                markers = getattr(target, 'markers', None)
+                if markers:
+                    spec = f"{spec}; {markers}"
+                arguments.append(spec)
         else:
             arguments.append(str(target))
     return arguments
@@ -237,22 +258,28 @@ def get_package_version(mixed, logger=None, entry_paths=None):
     return {result['name'].lower(): result['version'] for result in search_packages_results}
 
 
-_PackageInfo = namedtuple("PackageInfo", ["name", "version", "location", "requires"])
+_PackageInfo = namedtuple("PackageInfo", ["name", "version", "location", "requires", "extra_requires"])
 
 
-def get_packages_info(entry_paths=None):
+def get_packages_info(entry_paths=None, marker_env=None):
     """
     Gather details from installed distributions. Print distribution name,
     version, location, and installed files.
+
+    `extra_requires` maps each extra the distribution declares to the distributions that extra
+    pulls in. Nothing in installed metadata records which extras were *requested* at install time,
+    so this is the only way to tell after the fact whether an extra was actually satisfied.
     """
     entry_paths = as_list(entry_paths) if entry_paths is not None else None
-    ws = WorkingSet(entry_paths)
     installed = {}
+    ws = WorkingSet(entry_paths, marker_env)
     for dist in ws:
         package = _PackageInfo(canonicalize_name(dist.project_name),
                                dist.version,
                                dist.location,
-                               [dep.project_name for dep in dist.requires()])
+                               [dep.name for dep in dist.requires()],
+                               {extra: [canonicalize_name(dep.name) for dep in dist.extra_requires(extra)]
+                                for extra in dist.extras})
 
         installed[package.name] = package
 
@@ -275,7 +302,7 @@ def search_packages_info(query, ws):
             'name': dist.project_name,
             'version': dist.version,
             'location': dist.location,
-            'requires': [dep.project_name for dep in dist.requires()],
+            'requires': [dep.name for dep in dist.requires()],
         }
 
         yield package
@@ -290,7 +317,7 @@ def version_satisfies_spec(spec, version):
         spec = SpecifierSet(spec)
     if not isinstance(version, Version):
         version = Version(version)
-    return spec.contains(version)
+    return spec.contains(version, prereleases=bool(spec.prereleases))
 
 
 def should_update_package(version):

@@ -21,14 +21,16 @@ import platform
 import sys
 import traceback
 from collections import OrderedDict
+from glob import glob, iglob, escape
 from io import StringIO
+from os import symlink
+from shutil import which
 
 
 def is_windows(platform=sys.platform, win_platforms={"win32", "cygwin", "msys"}):
     return platform in win_platforms
 
 
-StringIO = StringIO
 IS_PYPY = '__pypy__' in sys.builtin_module_names
 IS_WIN = is_windows()
 
@@ -41,25 +43,12 @@ def is_string(val):
     return isinstance(val, str)
 
 
-from shutil import which  # noqa: E402
-
-
-def save_tb(ex):
-    pass
-
-
-is_string = is_string
 makedirs = os.makedirs
-which = which
 
 odict = OrderedDict
 
-_mp_get_context = None  # This will be patched at runtime
-mp_ForkingPickler = None  # This will be patched at runtime
-mp_log_to_stderr = None  # This will be patched at runtime
 _mp_billiard_pyb_env = None  # This will be patched at runtime
 
-_old_billiard_spawn_passfds = None  # This will be patched at runtime
 _installed_tblib = False
 
 from multiprocessing import log_to_stderr as mp_log_to_stderr, get_context as _mp_get_context  # noqa: E402
@@ -90,11 +79,6 @@ def patch_mp():
 def mp_get_context(context):
     global _mp_get_context
     return _mp_get_context(context)
-
-
-mp_ForkingPickler = mp_ForkingPickler
-mp_log_to_stderr = mp_log_to_stderr
-_mp_get_context = _mp_get_context
 
 
 def _instrumented_target(q, target, *args, **kwargs):
@@ -160,17 +144,65 @@ def add_env_to_path(python_env, sys_path):
             sys_path.append(path)
 
 
-from glob import glob, iglob, escape  # noqa: E402
-
-from os import symlink  # noqa: E402
-
-symlink = symlink
-
 sys_executable_suffix = sys.executable[len(sys.exec_prefix) + 1:]
 
 python_specific_dir_name = "%s-%s" % (platform.python_implementation().lower(),
                                       ".".join(str(f) for f in sys.version_info))
 
 _, _venv_python_exename = os.path.split(os.path.abspath(getattr(sys, "_base_executable", sys.executable)))
+
+try:
+    from imp import load_source
+except ImportError:
+    from importlib import machinery as importlib_machinery
+    from importlib import util as importlib_util
+    from importlib._bootstrap import _exec as importlib_exec
+    from importlib._bootstrap import _load as importlib_load
+
+
+    class _HackedGetData:
+
+        """Compatibility support for 'file' arguments of various load_*()
+        functions."""
+
+        def __init__(self, fullname, path, file=None):
+            super().__init__(fullname, path)
+            self.file = file
+
+        def get_data(self, path):
+            """Gross hack to contort loader to deal w/ load_*()'s bad API."""
+            if self.file and path == self.path:
+                # The contract of get_data() requires us to return bytes. Reopen the
+                # file in binary mode if needed.
+                if not self.file.closed:
+                    file = self.file
+                    if 'b' not in file.mode:
+                        file.close()
+                if self.file.closed:
+                    self.file = file = open(self.path, 'rb')
+
+                with file:
+                    return file.read()
+            else:
+                return super().get_data(path)
+
+
+    class _LoadSourceCompatibility(_HackedGetData, importlib_machinery.SourceFileLoader):
+
+        """Compatibility support for implementing load_source()."""
+
+
+    def load_source(name, pathname, file=None):
+        loader = _LoadSourceCompatibility(name, pathname, file)
+        spec = importlib_util.spec_from_file_location(name, pathname, loader=loader)
+        if name in sys.modules:
+            module = importlib_exec(spec, sys.modules[name])
+        else:
+            module = importlib_load(spec)
+        # To allow reloading to potentially work, use a non-hacked loader which
+        # won't rely on a now-closed file object.
+        module.__loader__ = importlib_machinery.SourceFileLoader(name, pathname)
+        module.__spec__.loader = module.__loader__
+        return module
 
 __all__ = ["glob", "iglob", "escape"]

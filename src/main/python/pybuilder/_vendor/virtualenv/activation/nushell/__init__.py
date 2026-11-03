@@ -1,28 +1,51 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
-import os
+from typing import TYPE_CHECKING
 
-from ...util.path import Path
-from ...util.six import ensure_text
+from virtualenv.activation.via_template import ViaTemplateActivator
 
-from ..via_template import ViaTemplateActivator
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from virtualenv.create.creator import Creator
 
 
 class NushellActivator(ViaTemplateActivator):
-    def templates(self):
-        yield Path("activate.nu")
-        yield Path("deactivate.nu")
+    def templates(self) -> Iterator[str]:
+        yield "activate.nu"
 
-    def replacements(self, creator, dest_folder):
-        # Due to nushell scoping, it isn't easy to create a function that will
-        # deactivate the environment. For that reason a __DEACTIVATE_PATH__
-        # replacement pointing to the deactivate.nu file is created
+    @staticmethod
+    def quote(string: str) -> str:
+        """Nushell supports raw strings like: r###'this is a string'###.
 
+        https://github.com/nushell/nushell.github.io/blob/main/book/working_with_strings.md
+
+        This method finds the maximum continuous sharps in the string and then quote it with an extra sharp.
+
+        """
+        max_sharps = 0
+        current_sharps = 0
+        for char in string:
+            if char == "#":
+                current_sharps += 1
+                max_sharps = max(current_sharps, max_sharps)
+            else:
+                current_sharps = 0
+        wrapping = "#" * (max_sharps + 1)
+        return f"r{wrapping}'{string}'{wrapping}"
+
+    def replacements(self, creator: Creator, dest_folder: Path) -> dict[str, str]:  # ruff:ignore[unused-method-argument]
         return {
             "__VIRTUAL_PROMPT__": "" if self.flag_prompt is None else self.flag_prompt,
-            "__VIRTUAL_ENV__": ensure_text(str(creator.dest)),
+            "__VIRTUAL_ENV__": str(creator.dest),
             "__VIRTUAL_NAME__": creator.env_name,
-            "__BIN_NAME__": ensure_text(str(creator.bin_dir.relative_to(creator.dest))),
-            "__PATH_SEP__": ensure_text(os.pathsep),
-            "__DEACTIVATE_PATH__": ensure_text(str(Path(dest_folder) / "deactivate.nu")),
+            "__BIN_NAME__": str(creator.bin_dir.relative_to(creator.dest)),
+            "__TCL_LIBRARY__": getattr(creator.interpreter, "tcl_lib", None) or "",
+            "__TK_LIBRARY__": getattr(creator.interpreter, "tk_lib", None) or "",
         }
+
+
+__all__ = [
+    "NushellActivator",
+]

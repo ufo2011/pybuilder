@@ -1,55 +1,57 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 from operator import attrgetter
+from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
-from ...util.six import ensure_text
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
-class Wheel(object):
-    def __init__(self, path):
+class Wheel:
+    def __init__(self, path: Path) -> None:
         # https://www.python.org/dev/peps/pep-0427/#file-name-convention
         # The wheel filename is {distribution}-{version}(-{build tag})?-{python tag}-{abi tag}-{platform tag}.whl
         self.path = path
         self._parts = path.stem.split("-")
 
     @classmethod
-    def from_path(cls, path):
-        if path is not None and path.suffix == ".whl" and len(path.stem.split("-")) >= 5:
+    def from_path(cls, path: Path) -> Wheel | None:
+        if path is not None and path.suffix == ".whl" and len(path.stem.split("-")) >= 5:  # ruff:ignore[magic-value-comparison]
             return cls(path)
         return None
 
     @property
-    def distribution(self):
+    def distribution(self) -> str:
         return self._parts[0]
 
     @property
-    def version(self):
+    def version(self) -> str:
         return self._parts[1]
 
     @property
-    def version_tuple(self):
+    def version_tuple(self) -> tuple[int, ...]:
         return self.as_version_tuple(self.version)
 
     @staticmethod
-    def as_version_tuple(version):
+    def as_version_tuple(version: str) -> tuple[int, ...]:
         result = []
         for part in version.split(".")[0:3]:
             try:
                 result.append(int(part))
-            except ValueError:
+            except ValueError:  # ruff:ignore[try-except-in-loop]
                 break
         if not result:
             raise ValueError(version)
         return tuple(result)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.path.name
 
-    def support_py(self, py_version):
-        name = "{}.dist-info/METADATA".format("-".join(self.path.stem.split("-")[0:2]))
-        with ZipFile(ensure_text(str(self.path)), "r") as zip_file:
+    def support_py(self, py_version: str) -> bool:
+        name = f"{'-'.join(self.path.stem.split('-')[0:2])}.dist-info/METADATA"
+        with ZipFile(str(self.path), "r") as zip_file:
             metadata = zip_file.read(name).decode("utf-8")
         marker = "Requires-Python:"
         requires = next((i[len(marker) :] for i in metadata.splitlines() if i.startswith(marker)), None)
@@ -74,21 +76,24 @@ class Wheel(object):
                     break
         return True
 
-    def __repr__(self):
-        return "{}({})".format(self.__class__.__name__, self.path)
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.path})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.path)
 
 
-def discover_wheels(from_folder, distribution, version, for_py_version):
+def discover_wheels(from_folder: Path, distribution: str, version: str | None, for_py_version: str) -> list[Wheel]:
     wheels = []
     for filename in from_folder.iterdir():
         wheel = Wheel.from_path(filename)
-        if wheel and wheel.distribution == distribution:
-            if version is None or wheel.version == version:
-                if wheel.support_py(for_py_version):
-                    wheels.append(wheel)
+        if (
+            wheel
+            and wheel.distribution == distribution
+            and (version is None or wheel.version == version)
+            and wheel.support_py(for_py_version)
+        ):
+            wheels.append(wheel)
     return sorted(wheels, key=attrgetter("version_tuple", "distribution"), reverse=True)
 
 
@@ -97,20 +102,24 @@ class Version:
     bundle = "bundle"
     embed = "embed"
     #: custom version handlers
-    non_version = (
-        bundle,
-        embed,
-    )
+    non_version = (bundle, embed)
 
     @staticmethod
-    def of_version(value):
+    def of_version(value: str | None) -> str | None:
         return None if value in Version.non_version else value
 
     @staticmethod
-    def as_pip_req(distribution, version):
-        return "{}{}".format(distribution, Version.as_version_spec(version))
+    def as_pip_req(distribution: str, version: str | None) -> str:
+        return f"{distribution}{Version.as_version_spec(version)}"
 
     @staticmethod
-    def as_version_spec(version):
+    def as_version_spec(version: str | None) -> str:
         of_version = Version.of_version(version)
-        return "" if of_version is None else "=={}".format(of_version)
+        return "" if of_version is None else f"=={of_version}"
+
+
+__all__ = [
+    "Version",
+    "Wheel",
+    "discover_wheels",
+]

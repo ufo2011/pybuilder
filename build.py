@@ -86,10 +86,10 @@ urls = {"Bug Tracker": "https://github.com/pybuilder/pybuilder/issues",
         "Documentation": "https://pybuilder.io/documentation",
         "Twitter": "https://twitter.com/pybuilder_",
         }
-license = "Apache License, Version 2.0"
-version = "0.13.4.dev"
+license = "Apache-2.0"
+version = "0.13.26.dev"
 
-requires_python = ">=3.6"
+requires_python = ">=3.11"
 
 default_task = ["analyze", "publish"]
 
@@ -103,25 +103,32 @@ def initialize(project):
     project.set_property("vendorize_target_dir", "$dir_source_main_python/pybuilder/_vendor")
     project.set_property("vendorize_packages", ["tblib~=1.5",
                                                 "tailer~=0.4",
-                                                "setuptools>=45.0.0",
+                                                "packaging>=24.0",
+                                                "setuptools[core]>=71.0",
                                                 "virtualenv>=20.0.0",
                                                 "importlib-resources>=1.0",
                                                 "importlib-metadata>=0.12",
+                                                "backports.tarfile",
                                                 "typing-extensions",
                                                 "colorama~=0.4.3"
                                                 ])
     project.set_property("vendorize_cleanup_globs", ["bin",
                                                      "setuptools",
-                                                     "easy_install.py"])
-    project.set_property("vendorize_preserve_metadata", ["virtualenv*"])
+                                                     "setuptools*/_vendor",
+                                                     "easy_install.py",
+                                                     "*.pth"])
+    project.set_property("vendorize_preserve_metadata", ["virtualenv*", "importlib_metadata*",
+                                                         "python_discovery*"])
 
     project.set_property("coverage_break_build", False)
     project.get_property("coverage_exceptions").extend(["pybuilder._vendor",
                                                         "pybuilder._vendor.*",
+                                                        # Only ever runs as a copy planted in a VEnv's site directory
+                                                        "pybuilder.plugins.python._coverage_bootstrap",
                                                         "setup"])
 
     project.set_property("flake8_break_build", True)
-    project.set_property("flake8_extend_ignore", "E303")
+    project.set_property("flake8_extend_ignore", "E303, F401, F824")
     project.set_property("flake8_include_test_sources", True)
     project.set_property("flake8_include_scripts", True)
     project.set_property("flake8_exclude_patterns", ",".join([
@@ -175,11 +182,11 @@ def initialize(project):
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
@@ -187,7 +194,6 @@ def initialize(project):
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: Apache Software License",
         "Topic :: Software Development :: Build Tools",
         "Topic :: Software Development :: Quality Assurance",
         "Topic :: Software Development :: Testing"])

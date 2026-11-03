@@ -19,54 +19,55 @@ inputs:
   deploy-on-branch:
     description: 'Deploy on Branches'
     required: true
+  release-app-id:
+    description: 'GitHub App ID for generating release tokens'
+    required: false
+    default: ''
+  release-app-private-key:
+    description: 'GitHub App private key for generating release tokens'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
-    - name: Configure
-      id: configure
-      uses: ChristopherHX/conditional@main
+    - name: Generate Release Token
+      id: release-token
+      if: inputs.release-app-id != '' && inputs.release-app-private-key != ''
+      uses: actions/create-github-app-token@v3
       with:
-        if: |
-          ${{ contains(fromJSON(inputs.deploy-on-os), runner.os) &&
-          contains(fromJSON(inputs.deploy-on-python), inputs.python-version) &&
-          contains(fromJSON(inputs.deploy-on-branch), github.ref) &&
-          inputs.with-venv == 'true' }}
-        step: |
-          shell: bash
-          run: |
-            echo "PYB_EXTRA_ARGS=+upload" >> $GITHUB_ENV
+        app-id: ${{ inputs.release-app-id }}
+        private-key: ${{ inputs.release-app-private-key }}
     - name: Build
-      id: build
-      uses: ChristopherHX/conditional@main
+      if: |
+        !(inputs.with-homebrew == 'true' && runner.os != 'macOS' ||
+          inputs.with-homebrew == 'true' && runner.os == 'macOS' &&
+          (contains(inputs.python-version, '-rc') ||
+           contains(inputs.python-version, '-b') ||
+           contains(inputs.python-version, '-dev') ||
+           contains(inputs.python-version, 'pypy-')
+          )
+         )
+      uses: pybuilder/build@master
       with:
-        if: |
-          ${{ !(inputs.with-homebrew == 'true' && runner.os != 'macOS' ||
-            inputs.with-homebrew == 'true' && runner.os == 'macOS' &&
-            (inputs.python-version == '3.6' ||
-             contains(inputs.python-version, '-rc') ||
-             contains(inputs.python-version, '-b') ||
-             contains(inputs.python-version, 'pypy-')
-            )
-           ) }}
-        step: |
-          uses: pybuilder/build@master
-          with:
-            checkout: 'false'
-            python-version: '${{ inputs.python-version }}'
-            homebrew-python: '${{ inputs.with-homebrew }}'
-            with-venv: '${{ inputs.with-venv }}'
-            install-pyb: 'false'
-            pyb-command: $PYTHON build.py
-            pyb-extra-args: +install ${{ env.PYB_EXTRA_ARGS }}
+        checkout: 'false'
+        python-version: '${{ inputs.python-version }}'
+        homebrew-python: '${{ inputs.with-homebrew }}'
+        with-venv: '${{ inputs.with-venv }}'
+        install-pyb: 'false'
+        pyb-command: $PYTHON build.py
+        pyb-extra-args: +install
+        is-upload: >-
+          ${{ contains(fromJSON(inputs.deploy-on-os), runner.os)
+          && contains(fromJSON(inputs.deploy-on-python), inputs.python-version)
+          && contains(fromJSON(inputs.deploy-on-branch), github.ref)
+          && inputs.with-venv == 'true' }}
+        github-token: ${{ steps.release-token.outputs.token || github.token }}
     - name: Print Logs on Failure
-      uses: ChristopherHX/conditional@main
-      with:
-        if: ${{ steps.configure.output == 'failure' || steps.build.output == 'failure' }}
-        step: |
-          shell: bash
-          run: |
-            for f in $(find . -name \*.log); do
-                echo ">>>>>> $f"
-                cat "$f"
-            done
-            exit 1
+      if: failure()
+      shell: bash
+      run: |
+        for f in $(find . -name \*.log); do
+            echo ">>>>>> $f"
+            cat "$f"
+        done
+        exit 1

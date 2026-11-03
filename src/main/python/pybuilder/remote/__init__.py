@@ -27,19 +27,11 @@ from textwrap import dedent  # noqa: E402
 from types import (MethodType,  # noqa: E402
                    FunctionType,
                    BuiltinFunctionType,
+                   WrapperDescriptorType,
+                   MethodWrapperType,
+                   MethodDescriptorType,
+                   ClassMethodDescriptorType,
                    )
-
-try:
-    from types import (WrapperDescriptorType,  # noqa: E402
-                       MethodWrapperType,
-                       MethodDescriptorType,
-                       ClassMethodDescriptorType,
-                       )
-except ImportError:
-    WrapperDescriptorType = type(object.__init__)
-    MethodWrapperType = type(object().__str__)
-    MethodDescriptorType = type(str.join)
-    ClassMethodDescriptorType = type(dict.__dict__['fromkeys'])
 
 from os.path import normcase as nc, sep  # noqa: E402
 from io import BytesIO, StringIO  # noqa: E402
@@ -85,10 +77,7 @@ class Process:
 
         from multiprocessing import spawn as patch_module
         if not IS_WIN:
-            try:
-                from multiprocessing import semaphore_tracker as tracker
-            except ImportError:
-                from multiprocessing import resource_tracker as tracker
+            from multiprocessing import resource_tracker as tracker
         else:
             tracker = None
 
@@ -96,8 +85,8 @@ class Process:
         if tracker:
             tracker.getfd()
 
-        old_python_exe = patch_module._python_exe
-        patch_module._python_exe = pyenv.executable[0]  # pyenv's actual sys.executable
+        old_python_exe = patch_module.get_executable()
+        patch_module.set_executable(pyenv.executable[0])  # pyenv's actual sys.executable
 
         old_get_command_line = patch_module.get_command_line
 
@@ -135,7 +124,7 @@ class Process:
         try:
             return self.proc.start()
         finally:
-            patch_module._python_exe = old_python_exe
+            patch_module.set_executable(old_python_exe)
             patch_module.get_command_line = old_get_command_line
             patch_module.get_preparation_data = old_preparation_data
 

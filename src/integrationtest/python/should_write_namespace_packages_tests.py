@@ -95,7 +95,7 @@ if __name__ == '__main__':
         name = 'integration-test',
         version = '1.0.dev0',
         description = '',
-        long_description = '',
+        long_description = 'integration-test',
         long_description_content_type = None,
         classifiers = [
             'Development Status :: 3 - Alpha',
@@ -124,6 +124,7 @@ if __name__ == '__main__':
             'eggs==0.2.3',
             'spam'
         ],
+        extras_require = {},
         dependency_links = ['https://github.com/downloads/halimath/pyassert/pyassert-0.2.2.tar.gz'],
         zip_safe = True,
         cmdclass = {'install': install},

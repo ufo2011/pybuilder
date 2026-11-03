@@ -1,14 +1,24 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
-from ...util.path import Path
+from typing import TYPE_CHECKING
 
-from ..via_template import ViaTemplateActivator
+from virtualenv.activation.via_template import ViaTemplateActivator
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from python_discovery import PythonInfo
 
 
 class CShellActivator(ViaTemplateActivator):
     @classmethod
-    def supports(cls, interpreter):
+    def supports(cls, interpreter: PythonInfo) -> bool:
         return interpreter.os != "nt"
 
-    def templates(self):
-        yield Path("activate.csh")
+    def templates(self) -> Iterator[str]:
+        yield "activate.csh"
+
+
+__all__ = [
+    "CShellActivator",
+]

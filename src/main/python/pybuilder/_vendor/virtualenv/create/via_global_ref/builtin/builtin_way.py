@@ -1,17 +1,25 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
-from abc import ABCMeta
+from abc import ABC
+from typing import TYPE_CHECKING
 
-from .....six import add_metaclass
+from virtualenv.create.creator import Creator
+from virtualenv.create.describe import Describe
 
-from ...creator import Creator
-from ...describe import Describe
+if TYPE_CHECKING:
+    from python_discovery import PythonInfo
+
+    from virtualenv.config.cli.parser import VirtualEnvOptions
 
 
-@add_metaclass(ABCMeta)
-class VirtualenvBuiltin(Creator, Describe):
-    """A creator that does operations itself without delegation, if we can create it we can also describe it"""
+class VirtualenvBuiltin(Creator, Describe, ABC):
+    """A creator that does operations itself without delegation, if we can create it we can also describe it."""
 
-    def __init__(self, options, interpreter):
+    def __init__(self, options: VirtualEnvOptions, interpreter: PythonInfo) -> None:
         Creator.__init__(self, options, interpreter)
         Describe.__init__(self, self.dest, interpreter)
+
+
+__all__ = [
+    "VirtualenvBuiltin",
+]

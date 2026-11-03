@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - master
+permissions:
+  contents: write
+
 jobs:
   build-primary:
     runs-on: ${{ matrix.os }}
@@ -14,12 +17,11 @@ jobs:
         os:
           - ubuntu-latest
         python-version:
-          - '3.10'
-          - '3.9'
-          - '3.8'
-          - '3.7'
-          - '3.6'
-          - 'pypy-3.7'
+          - '3.15'
+          - '3.14'
+          - '3.13'
+          - '3.12'
+          - '3.11'
         with-venv:
           - 'true'
           - 'false'
@@ -28,15 +30,19 @@ jobs:
       TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/
         with:
           python-version: '${{ matrix.python-version }}'
           with-venv: '${{ matrix.with-venv }}'
           with-homebrew: 'false'
-          deploy-on-python: '["3.9"]'
+          deploy-on-python: '["3.13"]'
           deploy-on-os: '["Linux"]'
           deploy-on-branch: '["refs/heads/master"]'
+          release-app-id: ${{ secrets.PYBUILDER_RELEASE_APP_ID }}
+          release-app-private-key: ${{ secrets.PYBUILDER_RELEASE_APP_PRIVATE_KEY }}
   build-secondary:
     runs-on: ${{ matrix.os }}
     continue-on-error: false
@@ -46,15 +52,13 @@ jobs:
       matrix:
         os:
           - windows-latest
-          - macos-10.15
-          - macos-11
+          - macos-15-intel
         python-version:
-          - '3.10'
-          - '3.9'
-          - '3.8'
-          - '3.7'
-          - '3.6'
-          - 'pypy-3.7'
+          - '3.15'
+          - '3.14'
+          - '3.13'
+          - '3.12'
+          - '3.11'
         with-venv:
           - 'true'
           - 'false'
@@ -64,7 +68,9 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: ./.github/
         with:
           python-version: '${{ matrix.python-version }}'
@@ -73,6 +79,42 @@ jobs:
           deploy-on-python: '[]'
           deploy-on-os: '[]'
           deploy-on-branch: '[]'
+  build-experimental:
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    needs: build-primary
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        python-version:
+          - '3.15t'
+          - '3.14t'
+          - '3.13t'
+          - 'pypy-3.11'
+          - 'pypy-3.12'
+        with-venv:
+          - 'true'
+          - 'false'
+        with-homebrew:
+          - 'true'
+          - 'false'
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/
+        with:
+          python-version: '${{ matrix.python-version }}'
+          with-venv: '${{ matrix.with-venv }}'
+          with-homebrew: '${{ matrix.with-homebrew }}'
+          deploy-on-python: '[]'
+          deploy-on-os: '[]'
+          deploy-on-branch: '[]'
+
   build-stable-summary:
     if: success() || failure()
     runs-on: ubuntu-latest
@@ -80,7 +122,10 @@ jobs:
     needs:
       - build-primary
       - build-secondary
+      - build-experimental
     steps:
       - name: Check build matrix status
-        if: needs.build-primary.result != 'success' || needs.build-secondary.result != 'success'
+        if: |
+          needs.build-primary.result != 'success' ||
+          needs.build-secondary.result != 'success'
         run: exit 1

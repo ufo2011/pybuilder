@@ -16,8 +16,6 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from __future__ import unicode_literals
-
 import os
 import shutil
 
@@ -36,11 +34,24 @@ def build_sdist(sdist_directory, config_settings=None):
     return build_with_pyb(sdist_directory, "SDist", artifact_filter, config_settings)
 
 
+def get_requires_for_build_wheel(config_settings=None):
+    return ["pip"]
+
+
 def build_with_pyb(target_dir, artifact_name, artifact_filter, config_settings=None, metadata_directory=None):
     from pybuilder.cli import main
     # verbose, debug, skip all optional...
-    if main("-v", "-X", "-o", "--reset-plugins", "clean", "publish"):
-        raise RuntimeError("PyBuilder build failed")
+
+    old_environ = dict(os.environ)
+    try:
+        os.environ.pop("_PYPROJECT_HOOKS_BACKEND_PATH", None)
+        os.environ.pop("_PYPROJECT_HOOKS_BUILD_BACKEND", None)
+        os.environ.pop("PIP_BUILD_TRACKER", None)
+        if main("-v", "-X", "-o", "--reset-plugins", "clean", "publish"):
+            raise RuntimeError("PyBuilder build failed")
+    finally:
+        os.environ.clear()
+        os.environ.update(old_environ)
 
     from pybuilder.reactor import Reactor
     from pybuilder.plugins.python.distutils_plugin import _get_generated_artifacts

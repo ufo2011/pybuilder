@@ -1,42 +1,49 @@
-"""
-Virtual environments in the traditional sense are built as reference to the host python. This file allows declarative
-references to elements on the file system, allowing our system to automatically detect what modes it can support given
-the constraints: e.g. can the file system symlink, can the files be read, executed, etc.
-"""
-from __future__ import absolute_import, unicode_literals
+"""Virtual environments in the traditional sense are built as reference to the host python. This file allows declarative references to elements on the file system, allowing our system to automatically detect what modes it can support given the constraints: e.g. can the file system symlink, can the files be read, executed, etc."""
+
+from __future__ import annotations
 
 import os
-from abc import ABCMeta, abstractmethod
+import sys
+from abc import ABC, abstractmethod
 from collections import OrderedDict
 from stat import S_IXGRP, S_IXOTH, S_IXUSR
+from typing import TYPE_CHECKING
 
-from .....six import add_metaclass
+from virtualenv.info import fs_is_case_sensitive, fs_supports_symlink
+from virtualenv.util.path import copy, make_exe, symlink
 
-from ....info import fs_is_case_sensitive, fs_supports_symlink
-from ....util.path import copy, make_exe, symlink
-from ....util.six import ensure_text
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+if sys.version_info >= (3, 11):  # pragma: no cover (py311+)
+    from enum import StrEnum
+else:  # pragma: no cover (py311+)
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 
 
-class RefMust(object):
+class RefMust(StrEnum):
     NA = "NA"
     COPY = "copy"
     SYMLINK = "symlink"
 
 
-class RefWhen(object):
+class RefWhen(StrEnum):
     ANY = "ANY"
     COPY = "copy"
     SYMLINK = "symlink"
 
 
-@add_metaclass(ABCMeta)
-class PathRef(object):
-    """Base class that checks if a file reference can be symlink/copied"""
+class PathRef(ABC):
+    """Base class that checks if a file reference can be symlink/copied."""
 
     FS_SUPPORTS_SYMLINK = fs_supports_symlink()
     FS_CASE_SENSITIVE = fs_is_case_sensitive()
 
-    def __init__(self, src, must=RefMust.NA, when=RefWhen.ANY):
+    def __init__(self, src: Path, must: str = RefMust.NA, when: str = RefWhen.ANY) -> None:
         self.must = must
         self.when = when
         self.src = src
@@ -44,15 +51,15 @@ class PathRef(object):
             self.exists = src.exists()
         except OSError:
             self.exists = False
-        self._can_read = None if self.exists else False
-        self._can_copy = None if self.exists else False
-        self._can_symlink = None if self.exists else False
+        self._can_read: bool | None = None if self.exists else False
+        self._can_copy: bool | None = None if self.exists else False
+        self._can_symlink: bool | None = None if self.exists else False
 
-    def __repr__(self):
-        return "{}(src={})".format(self.__class__.__name__, self.src)
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(src={self.src})"
 
     @property
-    def can_read(self):
+    def can_read(self) -> bool:
         if self._can_read is None:
             if self.src.is_file():
                 try:
@@ -61,11 +68,11 @@ class PathRef(object):
                 except OSError:
                     self._can_read = False
             else:
-                self._can_read = os.access(ensure_text(str(self.src)), os.R_OK)
+                self._can_read = os.access(str(self.src), os.R_OK)
         return self._can_read
 
     @property
-    def can_copy(self):
+    def can_copy(self) -> bool:
         if self._can_copy is None:
             if self.must == RefMust.SYMLINK:
                 self._can_copy = self.can_symlink
@@ -74,7 +81,7 @@ class PathRef(object):
         return self._can_copy
 
     @property
-    def can_symlink(self):
+    def can_symlink(self) -> bool:
         if self._can_symlink is None:
             if self.must == RefMust.COPY:
                 self._can_symlink = self.can_copy
@@ -83,10 +90,10 @@ class PathRef(object):
         return self._can_symlink
 
     @abstractmethod
-    def run(self, creator, symlinks):
+    def run(self, creator: object, symlinks: bool) -> None:
         raise NotImplementedError
 
-    def method(self, symlinks):
+    def method(self, symlinks: bool) -> Callable[..., None]:
         if self.must == RefMust.SYMLINK:
             return symlink
         if self.must == RefMust.COPY:
@@ -94,22 +101,21 @@ class PathRef(object):
         return symlink if symlinks else copy
 
 
-@add_metaclass(ABCMeta)
-class ExePathRef(PathRef):
-    """Base class that checks if a executable can be references via symlink/copy"""
+class ExePathRef(PathRef, ABC):
+    """Base class that checks if a executable can be references via symlink/copy."""
 
-    def __init__(self, src, must=RefMust.NA, when=RefWhen.ANY):
-        super(ExePathRef, self).__init__(src, must, when)
-        self._can_run = None
+    def __init__(self, src: Path, must: str = RefMust.NA, when: str = RefWhen.ANY) -> None:
+        super().__init__(src, must, when)
+        self._can_run: bool | None = None
 
     @property
-    def can_symlink(self):
+    def can_symlink(self) -> bool:
         if self.FS_SUPPORTS_SYMLINK:
             return self.can_run
         return False
 
     @property
-    def can_run(self):
+    def can_run(self) -> bool:
         if self._can_run is None:
             mode = self.src.stat().st_mode
             for key in [S_IXUSR, S_IXGRP, S_IXOTH]:
@@ -118,17 +124,17 @@ class ExePathRef(PathRef):
                 break
             else:
                 self._can_run = False
-        return self._can_run
+        return self._can_run  # ty: ignore[invalid-return-type]
 
 
 class PathRefToDest(PathRef):
-    """Link a path on the file system"""
+    """Link a path on the file system."""
 
-    def __init__(self, src, dest, must=RefMust.NA, when=RefWhen.ANY):
-        super(PathRefToDest, self).__init__(src, must, when)
+    def __init__(self, src: Path, dest: Callable[..., Path], must: str = RefMust.NA, when: str = RefWhen.ANY) -> None:
+        super().__init__(src, must, when)
         self.dest = dest
 
-    def run(self, creator, symlinks):
+    def run(self, creator: object, symlinks: bool) -> None:
         dest = self.dest(creator, self.src)
         method = self.method(symlinks)
         dest_iterable = dest if isinstance(dest, list) else (dest,)
@@ -139,9 +145,11 @@ class PathRefToDest(PathRef):
 
 
 class ExePathRefToDest(PathRefToDest, ExePathRef):
-    """Link a exe path on the file system"""
+    """Link a exe path on the file system."""
 
-    def __init__(self, src, targets, dest, must=RefMust.NA, when=RefWhen.ANY):
+    def __init__(
+        self, src: Path, targets: list[str], dest: Callable[..., Path], must: str = RefMust.NA, when: str = RefWhen.ANY
+    ) -> None:
         ExePathRef.__init__(self, src, must, when)
         PathRefToDest.__init__(self, src, dest, must, when)
         if not self.FS_CASE_SENSITIVE:
@@ -150,7 +158,7 @@ class ExePathRefToDest(PathRefToDest, ExePathRef):
         self.aliases = targets[1:]
         self.dest = dest
 
-    def run(self, creator, symlinks):
+    def run(self, creator: object, symlinks: bool) -> None:
         bin_dir = self.dest(creator, self.src).parent
         dest = bin_dir / self.base
         method = self.method(symlinks)
@@ -168,5 +176,15 @@ class ExePathRefToDest(PathRefToDest, ExePathRef):
             if not symlinks:
                 make_exe(link_file)
 
-    def __repr__(self):
-        return "{}(src={}, alias={})".format(self.__class__.__name__, self.src, self.aliases)
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(src={self.src}, alias={self.aliases})"
+
+
+__all__ = [
+    "ExePathRef",
+    "ExePathRefToDest",
+    "PathRef",
+    "PathRefToDest",
+    "RefMust",
+    "RefWhen",
+]

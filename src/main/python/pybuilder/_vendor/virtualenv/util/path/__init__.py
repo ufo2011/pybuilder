@@ -1,18 +1,16 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
-from ._pathlib import Path
 from ._permission import make_exe, set_tree
 from ._sync import copy, copytree, ensure_dir, safe_delete, symlink
 from ._win import get_short_path_name
 
-__all__ = (
-    "ensure_dir",
-    "symlink",
+__all__ = [
     "copy",
     "copytree",
-    "Path",
-    "make_exe",
-    "set_tree",
-    "safe_delete",
+    "ensure_dir",
     "get_short_path_name",
-)
+    "make_exe",
+    "safe_delete",
+    "set_tree",
+    "symlink",
+]

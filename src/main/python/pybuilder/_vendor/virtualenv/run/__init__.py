@@ -1,30 +1,44 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import logging
 import os
 from functools import partial
+from typing import TYPE_CHECKING
 
-from ..app_data import make_app_data
-from ..config.cli.parser import VirtualEnvConfigParser
-from ..report import LEVELS, setup_report
-from ..run.session import Session
-from ..seed.wheels.periodic_update import manual_upgrade
-from ..version import __version__
+from virtualenv.app_data import make_app_data
+from virtualenv.config.cli.parser import VirtualEnvConfigParser, VirtualEnvOptions
+from virtualenv.report import LEVELS, setup_report
+from virtualenv.run.session import Session
+from virtualenv.seed.wheels.periodic_update import manual_upgrade
+from virtualenv.version import __version__
+
 from .plugin.activators import ActivationSelector
 from .plugin.creators import CreatorSelector
 from .plugin.discovery import get_discover
 from .plugin.seeders import SeederSelector
 
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
-def cli_run(args, options=None, setup_logging=True, env=None):
-    """
-    Create a virtual environment given some command line interface arguments.
+    from .plugin.base import ComponentBuilder
+
+
+def cli_run(
+    args: list[str],
+    options: VirtualEnvOptions | None = None,
+    setup_logging: bool = True,  # ruff:ignore[boolean-default-value-positional-argument]
+    env: MutableMapping[str, str] | None = None,
+) -> Session:
+    """Create a virtual environment given some command line interface arguments.
 
     :param args: the command line arguments
     :param options: passing in a ``VirtualEnvOptions`` object allows return of the parsed options
     :param setup_logging: ``True`` if setup logging handlers, ``False`` to use handlers already registered
     :param env: environment variables to use
-    :return: the session object of the creation (its structure for now is experimental and might change on short notice)
+
+    :returns: the session object of the creation (its structure for now is experimental and might change on short
+        notice)
+
     """
     env = os.environ if env is None else env
     of_session = session_via_cli(args, options, setup_logging, env)
@@ -33,26 +47,47 @@ def cli_run(args, options=None, setup_logging=True, env=None):
     return of_session
 
 
-def session_via_cli(args, options=None, setup_logging=True, env=None):
-    """
-    Create a virtualenv session (same as cli_run, but this does not perform the creation). Use this if you just want to
-    query what the virtual environment would look like, but not actually create it.
+def session_via_cli(
+    args: list[str],
+    options: VirtualEnvOptions | None = None,
+    setup_logging: bool = True,  # ruff:ignore[boolean-default-value-positional-argument]
+    env: MutableMapping[str, str] | None = None,
+) -> Session:
+    """Create a virtualenv session (same as cli_run, but this does not perform the creation). Use this if you just want to query what the virtual environment would look like, but not actually create it.
 
     :param args: the command line arguments
     :param options: passing in a ``VirtualEnvOptions`` object allows return of the parsed options
     :param setup_logging: ``True`` if setup logging handlers, ``False`` to use handlers already registered
     :param env: environment variables to use
-    :return: the session object of the creation (its structure for now is experimental and might change on short notice)
+
+    :returns: the session object of the creation (its structure for now is experimental and might change on short
+        notice)
+
     """
     env = os.environ if env is None else env
     parser, elements = build_parser(args, options, setup_logging, env)
-    options = parser.parse_args(args)
-    creator, seeder, activators = tuple(e.create(options) for e in elements)  # create types
-    of_session = Session(options.verbosity, options.app_data, parser._interpreter, creator, seeder, activators)  # noqa
-    return of_session
+    options = parser.parse_args(args)  # ty: ignore[invalid-assignment]
+    options.py_version = parser._interpreter.version_info  # ruff:ignore[private-member-access]  # ty: ignore[invalid-assignment, unresolved-attribute]
+    creator, seeder, activators = tuple(
+        e.create(options)  # ty: ignore[invalid-argument-type]
+        for e in elements
+    )  # create types
+    return Session(
+        options.verbosity,  # ty: ignore[unresolved-attribute, invalid-argument-type]
+        options.app_data,  # ty: ignore[unresolved-attribute]
+        parser._interpreter,  # ruff:ignore[private-member-access]  # ty: ignore[invalid-argument-type]
+        creator,  # ty: ignore[invalid-argument-type]
+        seeder,  # ty: ignore[invalid-argument-type]
+        activators,  # ty: ignore[invalid-argument-type]
+    )
 
 
-def build_parser(args=None, options=None, setup_logging=True, env=None):
+def build_parser(
+    args: list[str] | None = None,
+    options: VirtualEnvOptions | None = None,
+    setup_logging: bool = True,  # ruff:ignore[boolean-default-value-positional-argument]
+    env: MutableMapping[str, str] | None = None,
+) -> tuple[VirtualEnvConfigParser, list[ComponentBuilder]]:
     parser = VirtualEnvConfigParser(options, os.environ if env is None else env)
     add_version_flag(parser)
     parser.add_argument(
@@ -67,10 +102,11 @@ def build_parser(args=None, options=None, setup_logging=True, env=None):
     handle_extra_commands(options)
 
     discover = get_discover(parser, args)
-    parser._interpreter = interpreter = discover.interpreter
+    parser._interpreter = interpreter = discover.interpreter  # ruff:ignore[private-member-access]
     if interpreter is None:
-        raise RuntimeError("failed to find interpreter for {}".format(discover))
-    elements = [
+        msg = f"failed to find interpreter for {discover}"
+        raise RuntimeError(msg)
+    elements: list[ComponentBuilder] = [
         CreatorSelector(interpreter, parser),
         SeederSelector(interpreter, parser),
         ActivationSelector(interpreter, parser),
@@ -82,18 +118,20 @@ def build_parser(args=None, options=None, setup_logging=True, env=None):
     return parser, elements
 
 
-def build_parser_only(args=None):
-    """Used to provide a parser for the doc generation"""
+def build_parser_only(args: list[str] | None = None) -> VirtualEnvConfigParser:
+    """Used to provide a parser for the doc generation."""
     return build_parser(args)[0]
 
 
-def handle_extra_commands(options):
+def handle_extra_commands(options: VirtualEnvOptions) -> None:
     if options.upgrade_embed_wheels:
         result = manual_upgrade(options.app_data, options.env)
         raise SystemExit(result)
 
 
-def load_app_data(args, parser, options):
+def load_app_data(
+    args: list[str] | None, parser: VirtualEnvConfigParser, options: VirtualEnvOptions | None
+) -> VirtualEnvOptions:
     parser.add_argument(
         "--read-only-app-data",
         action="store_true",
@@ -124,19 +162,19 @@ def load_app_data(args, parser, options):
     return options
 
 
-def add_version_flag(parser):
-    from ... import virtualenv
+def add_version_flag(parser: VirtualEnvConfigParser) -> None:
+    import virtualenv  # ruff:ignore[import-outside-top-level]
 
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s {} from {}".format(__version__, virtualenv.__file__),
+        version=f"%(prog)s {__version__} from {virtualenv.__file__}",
         help="display the version of the virtualenv package and its location, then exit",
     )
 
 
-def _do_report_setup(parser, args, setup_logging):
-    level_map = ", ".join("{}={}".format(logging.getLevelName(l), c) for c, l in sorted(list(LEVELS.items())))
+def _do_report_setup(parser: VirtualEnvConfigParser, args: list[str] | None, setup_logging: bool) -> None:
+    level_map = ", ".join(f"{logging.getLevelName(line)}={c}" for c, line in sorted(LEVELS.items()))
     msg = "verbosity = verbose - quiet, default {}, mapping => {}"
     verbosity_group = parser.add_argument_group(
         title="verbosity",
@@ -145,12 +183,15 @@ def _do_report_setup(parser, args, setup_logging):
     verbosity = verbosity_group.add_mutually_exclusive_group()
     verbosity.add_argument("-v", "--verbose", action="count", dest="verbose", help="increase verbosity", default=2)
     verbosity.add_argument("-q", "--quiet", action="count", dest="quiet", help="decrease verbosity", default=0)
+    # do not configure logging if only help is requested, as no logging is required for this
+    if args and any(i in args for i in ("-h", "--help")):
+        return
     option, _ = parser.parse_known_args(args)
     if setup_logging:
-        setup_report(option.verbosity)
+        setup_report(option.verbosity)  # ty: ignore[invalid-argument-type]
 
 
-__all__ = (
+__all__ = [
     "cli_run",
     "session_via_cli",
-)
+]

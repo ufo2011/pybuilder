@@ -1,45 +1,61 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import os
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from ...six import add_metaclass
+if TYPE_CHECKING:
+    from argparse import ArgumentParser
+    from pathlib import Path
+
+    from python_discovery import PythonInfo
+
+    from virtualenv.config.cli.parser import VirtualEnvOptions
+    from virtualenv.create.creator import Creator
 
 
-@add_metaclass(ABCMeta)
-class Activator(object):
-    """Generates an activate script for the virtual environment"""
+class Activator(ABC):
+    """Generates activate script for the virtual environment."""
 
-    def __init__(self, options):
+    def __init__(self, options: VirtualEnvOptions) -> None:
         """Create a new activator generator.
 
         :param options: the parsed options as defined within :meth:`add_parser_arguments`
+
         """
         self.flag_prompt = os.path.basename(os.getcwd()) if options.prompt == "." else options.prompt
 
     @classmethod
-    def supports(cls, interpreter):
+    def supports(cls, interpreter: PythonInfo) -> bool:  # ruff:ignore[unused-class-method-argument]
         """Check if the activation script is supported in the given interpreter.
 
         :param interpreter: the interpreter we need to support
-        :return: ``True`` if supported, ``False`` otherwise
+
+        :returns: ``True`` if supported, ``False`` otherwise
+
         """
         return True
 
-    @classmethod
-    def add_parser_arguments(cls, parser, interpreter):
-        """
-        Add CLI arguments for this activation script.
+    @classmethod  # ruff:ignore[empty-method-without-abstract-decorator]
+    def add_parser_arguments(cls, parser: ArgumentParser, interpreter: PythonInfo) -> None:
+        """Add CLI arguments for this activation script.
 
         :param parser: the CLI parser
         :param interpreter: the interpreter this virtual environment is based of
+
         """
 
     @abstractmethod
-    def generate(self, creator):
-        """Generate the activate script for the given creator.
+    def generate(self, creator: Creator) -> list[Path]:
+        """Generate activate script for the given creator.
 
-        :param creator: the creator (based of :class:`virtualenv.create.creator.Creator`) we used to create this \
-        virtual environment
+        :param creator: the creator (based of :class:`virtualenv.create.creator.Creator`) we used to create this virtual
+            environment
+
         """
         raise NotImplementedError
+
+
+__all__ = [
+    "Activator",
+]

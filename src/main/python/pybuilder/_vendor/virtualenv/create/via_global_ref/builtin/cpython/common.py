@@ -1,65 +1,99 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
-from abc import ABCMeta
+import re
+from abc import ABC
 from collections import OrderedDict
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ......six import add_metaclass
+from virtualenv.create.describe import PosixSupports, WindowsSupports
+from virtualenv.create.via_global_ref.builtin.ref import RefMust, RefWhen
+from virtualenv.create.via_global_ref.builtin.via_global_self_do import ViaGlobalRefVirtualenvBuiltin
 
-from ....describe import PosixSupports, WindowsSupports
-from ..ref import RefMust, RefWhen
-from .....util.path import Path
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
-from ..via_global_self_do import ViaGlobalRefVirtualenvBuiltin
+    from python_discovery import PythonInfo
 
 
-@add_metaclass(ABCMeta)
-class CPython(ViaGlobalRefVirtualenvBuiltin):
+class CPython(ViaGlobalRefVirtualenvBuiltin, ABC):
     @classmethod
-    def can_describe(cls, interpreter):
-        return interpreter.implementation == "CPython" and super(CPython, cls).can_describe(interpreter)
+    def can_describe(cls, interpreter: PythonInfo) -> bool:
+        return interpreter.implementation == "CPython" and super().can_describe(interpreter)
 
     @classmethod
-    def exe_stem(cls):
+    def exe_stem(cls) -> str:
         return "python"
 
 
-@add_metaclass(ABCMeta)
-class CPythonPosix(CPython, PosixSupports):
-    """Create a CPython virtual environment on POSIX platforms"""
+class CPythonPosix(CPython, PosixSupports, ABC):
+    """Create a CPython virtual environment on POSIX platforms."""
 
     @classmethod
-    def _executables(cls, interpreter):
-        host_exe = Path(interpreter.system_executable)
-        major, minor = interpreter.version_info.major, interpreter.version_info.minor
-        targets = OrderedDict(
-            (i, None) for i in ["python", "python{}".format(major), "python{}.{}".format(major, minor), host_exe.name]
-        )
-        must = RefMust.COPY if interpreter.version_info.major == 2 else RefMust.NA
-        yield host_exe, list(targets.keys()), must, RefWhen.ANY
+    def _executables(cls, interpreter: PythonInfo) -> Generator[tuple[Path, list[str], str, str]]:
+        host_exe = Path(interpreter.system_executable)  # ty: ignore[invalid-argument-type]
+        minor = interpreter.version_info.minor
+        names = [
+            "python",
+            "python3",
+            f"python3.{minor}",
+            *((f"python3.{minor}t",) if interpreter.free_threaded else ()),
+            host_exe.name,
+        ]
+        targets = OrderedDict((i, None) for i in names)
+        yield host_exe, list(targets.keys()), RefMust.NA, RefWhen.ANY
 
 
-@add_metaclass(ABCMeta)
-class CPythonWindows(CPython, WindowsSupports):
+class CPythonWindows(CPython, WindowsSupports, ABC):
     @classmethod
-    def _executables(cls, interpreter):
+    def _executables(cls, interpreter: PythonInfo) -> Generator[tuple[Path, list[str], str, str]]:
         # symlink of the python executables does not work reliably, copy always instead
         # - https://bugs.python.org/issue42013
         # - venv
         host = cls.host_python(interpreter)
-        for path in (host.parent / n for n in {"python.exe", host.name}):
+        minor = interpreter.version_info.minor
+        names = {
+            "python.exe",
+            "python3.exe",
+            "python3",
+            host.name,
+            *((f"python3.{minor}t.exe",) if interpreter.free_threaded else ()),
+        }
+        for path in (host.parent / n for n in names):
             yield host, [path.name], RefMust.COPY, RefWhen.ANY
         # for more info on pythonw.exe see https://stackoverflow.com/a/30313091
         python_w = host.parent / "pythonw.exe"
-        yield python_w, [python_w.name], RefMust.COPY, RefWhen.ANY
+        yield (
+            python_w,
+            [python_w.name, "pythonw3.exe", *((f"pythonw3.{minor}t.exe",) if interpreter.free_threaded else ())],
+            RefMust.COPY,
+            RefWhen.ANY,
+        )
 
     @classmethod
-    def host_python(cls, interpreter):
-        return Path(interpreter.system_executable)
+    def host_python(cls, interpreter: PythonInfo) -> Path:
+        return Path(interpreter.system_executable)  # ty: ignore[invalid-argument-type]
 
 
-def is_mac_os_framework(interpreter):
+def is_mac_os_framework(interpreter: PythonInfo) -> bool:
     if interpreter.platform == "darwin":
-        framework_var = interpreter.sysconfig_vars.get("PYTHONFRAMEWORK")
-        value = "Python3" if interpreter.version_info.major == 3 else "Python"
-        return framework_var == value
+        return interpreter.sysconfig_vars.get("PYTHONFRAMEWORK") == "Python3"
     return False
+
+
+def is_macos_brew(interpreter: PythonInfo) -> bool:
+    return interpreter.platform == "darwin" and _BREW.fullmatch(interpreter.system_prefix) is not None
+
+
+_BREW = re.compile(
+    r"/(usr/local|opt/homebrew)/(opt/python@3\.\d{1,2}|Cellar/python@3\.\d{1,2}/3\.\d{1,2}\.\d{1,2})/Frameworks/"
+    r"Python\.framework/Versions/3\.\d{1,2}",
+)
+
+__all__ = [
+    "CPython",
+    "CPythonPosix",
+    "CPythonWindows",
+    "is_mac_os_framework",
+    "is_macos_brew",
+]

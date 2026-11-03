@@ -11,30 +11,45 @@ deactivate () {
     unset -f pydoc >/dev/null 2>&1 || true
 
     # reset old environment variables
-    # ! [ -z ${VAR+_} ] returns true if VAR is declared at all
-    if ! [ -z "${_OLD_VIRTUAL_PATH:+_}" ] ; then
+    if [ -n "${_OLD_VIRTUAL_PATH:-}" ] ; then
         PATH="$_OLD_VIRTUAL_PATH"
         export PATH
         unset _OLD_VIRTUAL_PATH
     fi
-    if ! [ -z "${_OLD_VIRTUAL_PYTHONHOME+_}" ] ; then
+    if [ -n "${_OLD_VIRTUAL_PYTHONHOME:-}" ] ; then
         PYTHONHOME="$_OLD_VIRTUAL_PYTHONHOME"
         export PYTHONHOME
         unset _OLD_VIRTUAL_PYTHONHOME
     fi
 
+    if [ -n "${_OLD_VIRTUAL_TCL_LIBRARY:-}" ]; then
+        TCL_LIBRARY="$_OLD_VIRTUAL_TCL_LIBRARY"
+        export TCL_LIBRARY
+        unset _OLD_VIRTUAL_TCL_LIBRARY
+    fi
+    if [ -n "${_OLD_VIRTUAL_TK_LIBRARY:-}" ]; then
+        TK_LIBRARY="$_OLD_VIRTUAL_TK_LIBRARY"
+        export TK_LIBRARY
+        unset _OLD_VIRTUAL_TK_LIBRARY
+    fi
+    if [ -n "${_OLD_PKG_CONFIG_PATH:-}" ]; then
+        PKG_CONFIG_PATH="$_OLD_PKG_CONFIG_PATH"
+        export PKG_CONFIG_PATH
+        unset _OLD_PKG_CONFIG_PATH
+    fi
+
     # The hash command must be called to get it to forget past
     # commands. Without forgetting past commands the $PATH changes
     # we made may not be respected
-    hash -r 2>/dev/null
+    hash -r 2>/dev/null || true
 
-    if ! [ -z "${_OLD_VIRTUAL_PS1+_}" ] ; then
+    if [ -n "${_OLD_VIRTUAL_PS1:-}" ] ; then
         PS1="$_OLD_VIRTUAL_PS1"
-        export PS1
         unset _OLD_VIRTUAL_PS1
     fi
 
     unset VIRTUAL_ENV
+    unset VIRTUAL_ENV_PROMPT
     if [ ! "${1-}" = "nondestructive" ] ; then
     # Self destruct!
         unset -f deactivate
@@ -44,30 +59,62 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV='__VIRTUAL_ENV__'
-if ([ "$OSTYPE" = "cygwin" ] || [ "$OSTYPE" = "msys" ]) && $(command -v cygpath &> /dev/null) ; then
-    VIRTUAL_ENV=$(cygpath -u "$VIRTUAL_ENV")
+if [ ! -d __VIRTUAL_ENV__ ]; then
+    echo "Virtual environment directory __VIRTUAL_ENV__ does not exist!" >&2
+    CURRENT_PATH=$(realpath "${BASH_SOURCE[0]}")
+    CURRENT_DIR=$(dirname "${CURRENT_PATH}")
+    VIRTUAL_ENV="$(realpath "${CURRENT_DIR}/../")"
+else
+    VIRTUAL_ENV=__VIRTUAL_ENV__
 fi
+
+case "$(uname)" in
+    CYGWIN*|MSYS*|MINGW*)
+        VIRTUAL_ENV=$(cygpath "$VIRTUAL_ENV")
+        ;;
+esac
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
-PATH="$VIRTUAL_ENV/__BIN_NAME__:$PATH"
+PATH="$VIRTUAL_ENV/"__BIN_NAME__":$PATH"
 export PATH
 
+_OLD_PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}"
+PKG_CONFIG_PATH="${VIRTUAL_ENV}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+export PKG_CONFIG_PATH
+
+if [ "x"__VIRTUAL_PROMPT__ != x ] ; then
+    VIRTUAL_ENV_PROMPT=__VIRTUAL_PROMPT__
+else
+    VIRTUAL_ENV_PROMPT=$(basename "$VIRTUAL_ENV")
+fi
+export VIRTUAL_ENV_PROMPT
+
 # unset PYTHONHOME if set
-if ! [ -z "${PYTHONHOME+_}" ] ; then
+if [ -n "${PYTHONHOME:-}" ] ; then
     _OLD_VIRTUAL_PYTHONHOME="$PYTHONHOME"
     unset PYTHONHOME
 fi
 
+if [ __TCL_LIBRARY__ != "" ]; then
+    if [ -n "${TCL_LIBRARY:-}" ] ; then
+        _OLD_VIRTUAL_TCL_LIBRARY="$TCL_LIBRARY"
+    fi
+    TCL_LIBRARY=__TCL_LIBRARY__
+    export TCL_LIBRARY
+fi
+
+if [ __TK_LIBRARY__ != "" ]; then
+    if [ -n "${TK_LIBRARY:-}" ] ; then
+        _OLD_VIRTUAL_TK_LIBRARY="$TK_LIBRARY"
+    fi
+    TK_LIBRARY=__TK_LIBRARY__
+    export TK_LIBRARY
+fi
+
 if [ -z "${VIRTUAL_ENV_DISABLE_PROMPT-}" ] ; then
     _OLD_VIRTUAL_PS1="${PS1-}"
-    if [ "x__VIRTUAL_PROMPT__" != x ] ; then
-        PS1="(__VIRTUAL_PROMPT__) ${PS1-}"
-    else
-        PS1="(`basename \"$VIRTUAL_ENV\"`) ${PS1-}"
-    fi
-    export PS1
+    PS1="(${VIRTUAL_ENV_PROMPT}) ${PS1-}"
 fi
 
 # Make sure to unalias pydoc if it's already there
@@ -80,4 +127,4 @@ pydoc () {
 # The hash command must be called to get it to forget past
 # commands. Without forgetting past commands the $PATH changes
 # we made may not be respected
-hash -r 2>/dev/null
+hash -r 2>/dev/null || true

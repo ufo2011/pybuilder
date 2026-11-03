@@ -1,75 +1,79 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import abc
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ......six import add_metaclass
-
-from ....describe import PosixSupports, Python3Supports, WindowsSupports
-from ..ref import PathRefToDest
-from .....util.path import Path
+from virtualenv.create.describe import PosixSupports, Python3Supports, WindowsSupports
+from virtualenv.create.via_global_ref.builtin.ref import PathRefToDest
 
 from .common import PyPy
 
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
 
-@add_metaclass(abc.ABCMeta)
-class PyPy3(PyPy, Python3Supports):
+    from python_discovery import PythonInfo
+
+    from virtualenv.create.via_global_ref.builtin.ref import PathRef
+
+
+class PyPy3(PyPy, Python3Supports, abc.ABC):
     @classmethod
-    def exe_stem(cls):
+    def exe_stem(cls) -> str:
         return "pypy3"
 
     @classmethod
-    def exe_names(cls, interpreter):
-        return super(PyPy3, cls).exe_names(interpreter) | {"pypy"}
+    def exe_names(cls, interpreter: PythonInfo) -> set[str]:
+        return super().exe_names(interpreter) | {"pypy"}
 
 
 class PyPy3Posix(PyPy3, PosixSupports):
-    """PyPy 2 on POSIX"""
-
-    @property
-    def stdlib(self):
-        """PyPy3 respects sysconfig only for the host python, virtual envs is instead lib/pythonx.y/site-packages"""
-        return self.dest / "lib" / "pypy{}".format(self.interpreter.version_release_str) / "site-packages"
+    """PyPy 3 on POSIX."""
 
     @classmethod
-    def _shared_libs(cls):
-        return ["libpypy3-c.so", "libpypy3-c.dylib"]
+    def _shared_libs(cls, python_dir: Path) -> Iterator[Path]:
+        # glob for libpypy3-c.so, libpypy3-c.dylib, libpypy3.9-c.so ...
+        return python_dir.glob("libpypy3*.*")
 
-    def to_lib(self, src):
+    def to_lib(self, src: Path) -> Path:
         return self.dest / "lib" / src.name
 
     @classmethod
-    def sources(cls, interpreter):
-        for src in super(PyPy3Posix, cls).sources(interpreter):
-            yield src
-        # Also copy/symlink anything under prefix/lib, which, for "portable"
-        # PyPy builds, includes the tk,tcl runtime and a number of shared
-        # objects. In distro-specific builds or on conda this should be empty
-        # (on PyPy3.8+ it will, like on CPython, hold the stdlib).
+    def sources(cls, interpreter: PythonInfo) -> Generator[PathRef]:
+        yield from super().sources(interpreter)
+        # PyPy >= 3.8 supports a standard prefix installation, where older versions always used a portable/development
+        # style installation. If this is a standard prefix installation, skip the below:
+        if interpreter.system_prefix == "/usr":
+            return
+        # Also copy/symlink anything under prefix/lib, which, for "portable" PyPy builds, includes the tk,tcl runtime
+        # and a number of shared objects. In distro-specific builds or on conda this should be empty (on PyPy3.8+ it
+        # will, like on CPython, hold the stdlib).
         host_lib = Path(interpreter.system_prefix) / "lib"
         stdlib = Path(interpreter.system_stdlib)
         if host_lib.exists() and host_lib.is_dir():
-            for path in host_lib.iterdir():
-                if stdlib == path:
-                    # For PyPy3.8+ the stdlib lives in lib/pypy3.8
-                    # We need to avoid creating a symlink to it since that
-                    # will defeat the purpose of a virtualenv
-                    continue
-                yield PathRefToDest(path, dest=cls.to_lib)
+            if (deps_file := host_lib / "PYPY_PORTABLE_DEPS.txt").exists():
+                for line in deps_file.read_text(encoding="utf-8").splitlines():
+                    dep = line.strip()
+                    if dep and (path := host_lib / dep).exists():
+                        yield PathRefToDest(path, dest=cls.to_lib)
+            else:
+                for path in host_lib.iterdir():
+                    if stdlib == path:
+                        continue
+                    yield PathRefToDest(path, dest=cls.to_lib)
 
 
 class Pypy3Windows(PyPy3, WindowsSupports):
-    """PyPy 3 on Windows"""
-
-    @property
-    def stdlib(self):
-        """PyPy3 respects sysconfig only for the host python, virtual envs is instead Lib/site-packages"""
-        return self.dest / "Lib" / "site-packages"
-
-    @property
-    def bin_dir(self):
-        """PyPy3 needs to fallback to pypy definition"""
-        return self.dest / "Scripts"
+    """PyPy 3 on Windows."""
 
     @classmethod
-    def _shared_libs(cls):
-        return ["libpypy3-c.dll", "libffi-7.dll", "libffi-8.dll"]
+    def _shared_libs(cls, python_dir: Path) -> Iterator[Path]:
+        # PyPy does not use a PEP 397 launcher, so all DLLs from the interpreter directory are needed for the venv
+        yield from python_dir.glob("*.dll")
+
+
+__all__ = [
+    "PyPy3",
+    "PyPy3Posix",
+    "Pypy3Windows",
+]

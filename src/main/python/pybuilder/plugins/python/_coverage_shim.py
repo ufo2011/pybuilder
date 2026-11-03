@@ -18,13 +18,16 @@
 
 import ast
 import sys
+from importlib.abc import Loader, MetaPathFinder
+from importlib.util import spec_from_loader
 from os.path import dirname
 
 
-class CoverageImporter:
+class CoverageImporter(Loader, MetaPathFinder):
     def __init__(self, coverage_parent_dir):
         self.coverage_parent_dir = coverage_parent_dir
         self._in_import = False
+        self._coverage_spec = None
 
     def find_module(self, fullname, path=None):
         """
@@ -46,6 +49,38 @@ class CoverageImporter:
         finally:
             self._in_import = False
             del sys.path[-1]
+
+    def create_module(self, spec):
+        """
+        Return the real `coverage` module.
+
+        Python 3.15 removed the legacy `load_module()` fallback from the import
+        machinery, so a PEP 451 loader is required.
+        """
+        module = self.load_module(spec.name)
+        # `module_from_spec()` overwrites `__spec__` with this importer's spec
+        # right after this returns, so remember the real one for `exec_module()`.
+        self._coverage_spec = module.__spec__
+        return module
+
+    def exec_module(self, module):
+        """
+        Restore the spec of the module returned by `create_module`.
+
+        `coverage` has already been imported and executed by `load_module`; only
+        its `__spec__` needs undoing so that it keeps pointing at the real origin
+        and loader.
+        """
+        if self._coverage_spec is not None:
+            module.__spec__ = self._coverage_spec
+            self._coverage_spec = None
+
+    def find_spec(self, fullname, path=None, target=None):
+        """Return a module spec for vendored names."""
+        return (
+            spec_from_loader(fullname, self)
+            if fullname == "coverage" else None
+        )
 
     def install(self):
         """
@@ -71,7 +106,7 @@ if __name__ == "__main__":
 
     sys.path.append(main_file_dir)
 
-    from _coverage_util import save_normalized_coverage, patch_coverage
+    from _coverage_util import save_normalized_coverage, patch_coverage, adopt_subprocess_coverage
 
     del sys.path[-1]
 
@@ -81,7 +116,6 @@ if __name__ == "__main__":
     from coverage import coverage as coverage_factory
     from coverage.execfile import PyRunner
 
-    coverage = coverage_factory(*(config.get("cov_args", ())), **(config.get("cov_kwargs", {})))
     source_path = config["cov_source_path"]
     omit_patterns = config["cov_omit_patterns"]
 
@@ -94,9 +128,16 @@ if __name__ == "__main__":
     runner = PyRunner(args, as_module=module)
     runner.prepare()
 
-    coverage.start()
-    try:
+    # A startup hook may already be measuring this process, from earlier than we can
+    # manage. Adopting it - rather than stacking a second Coverage on top - is what
+    # gets its data normalized when the hook was Coverage's own.
+    if adopt_subprocess_coverage(source_path, omit_patterns) is not None:
         runner.run()
-    finally:
-        coverage.stop()
-        save_normalized_coverage(coverage, source_path, omit_patterns)
+    else:
+        coverage = coverage_factory(*(config.get("cov_args", ())), **(config.get("cov_kwargs", {})))
+        coverage.start()
+        try:
+            runner.run()
+        finally:
+            coverage.stop()
+            save_normalized_coverage(coverage, source_path, omit_patterns)

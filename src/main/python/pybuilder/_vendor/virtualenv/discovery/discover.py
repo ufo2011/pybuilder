@@ -1,47 +1,43 @@
-from __future__ import absolute_import, unicode_literals
+"""Virtualenv-specific Discover base class for plugin-based Python discovery."""
 
-from abc import ABCMeta, abstractmethod
+from __future__ import annotations
 
-from ...six import add_metaclass
+import os
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from argparse import ArgumentParser
+    from collections.abc import Mapping
+
+    from python_discovery import PythonInfo
+
+    from virtualenv.config.cli.parser import VirtualEnvOptions
 
 
-@add_metaclass(ABCMeta)
-class Discover(object):
-    """Discover and provide the requested Python interpreter"""
-
+class Discover(ABC):
     @classmethod
-    def add_parser_arguments(cls, parser):
-        """Add CLI arguments for this discovery mechanisms.
-
-        :param parser: the CLI parser
-        """
+    def add_parser_arguments(cls, parser: ArgumentParser) -> None:
         raise NotImplementedError
 
-    # noinspection PyUnusedLocal
-    def __init__(self, options):
-        """Create a new discovery mechanism.
-
-        :param options: the parsed options as defined within :meth:`add_parser_arguments`
-        """
+    def __init__(self, options: VirtualEnvOptions) -> None:
         self._has_run = False
-        self._interpreter = None
-        self._env = options.env
+        self._interpreter: PythonInfo | None = None
+        self._env: Mapping[str, str] = options.env if options.env is not None else os.environ
 
     @abstractmethod
-    def run(self):
-        """Discovers an interpreter.
-
-
-        :return: the interpreter ready to use for virtual environment creation
-        """
+    def run(self) -> PythonInfo | None:
         raise NotImplementedError
 
     @property
-    def interpreter(self):
-        """
-        :return: the interpreter as returned by :meth:`run`, cached
-        """
+    def interpreter(self) -> PythonInfo | None:
+        """The interpreter as returned by :meth:`run`, cached."""
         if self._has_run is False:
             self._interpreter = self.run()
             self._has_run = True
         return self._interpreter
+
+
+__all__ = [
+    "Discover",
+]

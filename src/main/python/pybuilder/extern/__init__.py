@@ -18,12 +18,13 @@
 
 import sys
 from importlib import import_module
-from importlib.abc import Loader
+from importlib.abc import Loader, MetaPathFinder
+from importlib.util import spec_from_loader
 
 import pybuilder._vendor
 
 
-class VendorImporter(Loader):
+class VendorImporter(Loader, MetaPathFinder):
     """
     A PEP 302 meta path importer for finding optionally-vendored
     or otherwise naturally-installed packages from root_name.
@@ -34,6 +35,7 @@ class VendorImporter(Loader):
         self.vendored_names = set(vendored_names)
         self.vendor_pkg = vendor_pkg
         self._in_flight_imports = set()
+        self._vendored_specs = {}
 
     @property
     def search_path(self):
@@ -41,8 +43,6 @@ class VendorImporter(Loader):
         Search first the vendor package then as a natural package.
         """
         yield self.vendor_pkg + "."
-
-    #        yield ""
 
     def find_module(self, fullname, path=None):
         """
@@ -87,16 +87,52 @@ class VendorImporter(Loader):
                 "distribution.".format(**locals())
             )
 
-    def _find_distributions(self, context):
-        context.path.insert(0, pybuilder._vendor.__file__[:-len("__init__.py") - 1])
-        return []
+    def create_module(self, spec):
+        """
+        Return the vendored module the alias `spec` stands for.
+
+        Python 3.15 removed the legacy `load_module()` fallback from the import
+        machinery, so a PEP 451 loader is required.
+        """
+        module = self.load_module(spec.name)
+        # `module_from_spec()` overwrites `__spec__` with the alias spec right
+        # after this returns, so remember the vendored module's own spec for
+        # `exec_module()` to put back.
+        self._vendored_specs[spec.name] = module.__spec__
+        return module
+
+    def exec_module(self, module):
+        """
+        Restore the spec of the module returned by `create_module`.
+
+        The vendored module has already been imported and executed under its own
+        name; only its `__spec__` needs undoing, otherwise consumers such as
+        `importlib.resources` see the alias spec, which has neither an origin nor
+        a loader able to locate the module's resources.
+        """
+        vendored_spec = self._vendored_specs.pop(module.__spec__.name, None)
+        if vendored_spec is not None:
+            module.__spec__ = vendored_spec
+
+    def find_spec(self, fullname, path=None, target=None):
+        """Return a module spec for vendored names."""
+        return (
+            spec_from_loader(fullname, self)
+            if self._module_matches_namespace(fullname) else None
+        )
+
+    def _module_matches_namespace(self, fullname):
+        """Figure out if the target module is vendored."""
+        root, base, target = fullname.partition(self.root_name + '.')
+        if root == fullname and not base and not target:
+            root = None
+            target = fullname
+        return not root and any(map(target.startswith, self.vendored_names))
 
     # https://github.com/pybuilder/pybuilder/issues/807
-    if sys.version_info[:2] == (3, 8):
-        def find_distributions(self, context):
-            return iter(self._find_distributions(context))
-    else:
-        find_distributions = _find_distributions
+    def find_distributions(self, context):
+        context.path.insert(0, pybuilder._vendor.__file__[:-len("__init__.py") - 1])
+        return []
 
     def install(self):
         """
@@ -105,12 +141,10 @@ class VendorImporter(Loader):
         if self not in sys.meta_path:
             sys.meta_path.insert(0, self)
 
-        for pkg in self.vendored_names:
-            for p in list(sys.modules):
-                if p == pkg or p.startswith(pkg + "."):
-                    sys.modules.pop(p, None)
+            for pkg in self.vendored_names:
+                for p in list(sys.modules):
+                    if p == pkg or p.startswith(pkg + "."):
+                        sys.modules.pop(p, None)
 
 
-# Don't run if we're actually in PDoc
-# if not (sys.version_info[0] == 2 and basename(sys.argv[0]) == "pdoc"):
 VendorImporter(__name__, pybuilder._vendor.__names__, pybuilder._vendor.__package__).install()

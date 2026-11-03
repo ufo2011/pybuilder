@@ -1,53 +1,61 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import annotations
 
 import abc
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ......six import add_metaclass
+from virtualenv.create.via_global_ref.builtin.ref import PathRefToDest, RefMust, RefWhen
+from virtualenv.create.via_global_ref.builtin.via_global_self_do import ViaGlobalRefVirtualenvBuiltin
 
-from ..ref import PathRefToDest, RefMust, RefWhen
-from .....util.path import Path
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
 
-from ..via_global_self_do import ViaGlobalRefVirtualenvBuiltin
+    from python_discovery import PythonInfo
+
+    from virtualenv.create.via_global_ref.builtin.ref import PathRef
 
 
-@add_metaclass(abc.ABCMeta)
-class PyPy(ViaGlobalRefVirtualenvBuiltin):
+class PyPy(ViaGlobalRefVirtualenvBuiltin, abc.ABC):
     @classmethod
-    def can_describe(cls, interpreter):
-        return interpreter.implementation == "PyPy" and super(PyPy, cls).can_describe(interpreter)
-
-    @classmethod
-    def _executables(cls, interpreter):
-        host = Path(interpreter.system_executable)
-        targets = sorted("{}{}".format(name, PyPy.suffix) for name in cls.exe_names(interpreter))
-        must = RefMust.COPY if interpreter.version_info.major == 2 else RefMust.NA
-        yield host, targets, must, RefWhen.ANY
+    def can_describe(cls, interpreter: PythonInfo) -> bool:
+        return interpreter.implementation == "PyPy" and super().can_describe(interpreter)
 
     @classmethod
-    def exe_names(cls, interpreter):
+    def _executables(cls, interpreter: PythonInfo) -> Generator[tuple[Path, list[str], str, str]]:
+        host = Path(interpreter.system_executable)  # ty: ignore[invalid-argument-type]
+        targets = sorted(f"{name}{PyPy.suffix}" for name in cls.exe_names(interpreter))
+        yield host, targets, RefMust.NA, RefWhen.ANY
+
+    @classmethod
+    def executables(cls, interpreter: PythonInfo) -> Generator[PathRef]:
+        yield from super().sources(interpreter)
+
+    @classmethod
+    def exe_names(cls, interpreter: PythonInfo) -> set[str]:
         return {
             cls.exe_stem(),
             "python",
-            "python{}".format(interpreter.version_info.major),
-            "python{}.{}".format(*interpreter.version_info),
+            f"python{interpreter.version_info.major}",
+            f"python{interpreter.version_info.major}.{interpreter.version_info.minor}",
         }
 
     @classmethod
-    def sources(cls, interpreter):
-        for src in super(PyPy, cls).sources(interpreter):
-            yield src
+    def sources(cls, interpreter: PythonInfo) -> Generator[PathRef]:  # ty: ignore[invalid-method-override]
+        yield from cls.executables(interpreter)
         for host in cls._add_shared_libs(interpreter):
             yield PathRefToDest(host, dest=lambda self, s: self.bin_dir / s.name)
 
     @classmethod
-    def _add_shared_libs(cls, interpreter):
+    def _add_shared_libs(cls, interpreter: PythonInfo) -> Generator[Path]:
         # https://bitbucket.org/pypy/pypy/issue/1922/future-proofing-virtualenv
-        python_dir = Path(interpreter.system_executable).resolve().parent
-        for libname in cls._shared_libs():
-            src = python_dir / libname
-            if src.exists():
-                yield src
+        python_dir = Path(interpreter.system_executable).resolve().parent  # ty: ignore[invalid-argument-type]
+        yield from cls._shared_libs(python_dir)
 
     @classmethod
-    def _shared_libs(cls):
+    def _shared_libs(cls, python_dir: Path) -> Iterator[Path]:
         raise NotImplementedError
+
+
+__all__ = [
+    "PyPy",
+]

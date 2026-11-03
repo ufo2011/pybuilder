@@ -1,44 +1,53 @@
-from __future__ import absolute_import, print_function, unicode_literals
+from __future__ import annotations
 
 import json
 import logging
 import os
 import sys
-from abc import ABCMeta, abstractmethod
+import textwrap
+from abc import ABC, abstractmethod
 from argparse import ArgumentTypeError
 from ast import literal_eval
 from collections import OrderedDict
-from textwrap import dedent
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ...six import add_metaclass
+if TYPE_CHECKING:
+    from argparse import ArgumentParser
+    from typing import Any, NoReturn
 
-from ..discovery.cached_py_info import LogCmd
-from ..info import WIN_CPYTHON_2
-from ..util.path import Path, safe_delete
-from ..util.six import ensure_str, ensure_text
-from ..util.subprocess import run_cmd
-from ..version import __version__
+    from python_discovery import PythonInfo
+
+    from virtualenv.app_data.base import AppData
+    from virtualenv.config.cli.parser import VirtualEnvOptions
+
+from os.path import commonpath
+
+from virtualenv.util.path import safe_delete
+from virtualenv.util.subprocess import LogCmd, run_cmd
+from virtualenv.version import __version__
 
 from .pyenv_cfg import PyEnvCfg
 
 HERE = Path(os.path.abspath(__file__)).parent
 DEBUG_SCRIPT = HERE / "debug.py"
+LOGGER = logging.getLogger(__name__)
 
 
-class CreatorMeta(object):
-    def __init__(self):
+class CreatorMeta:
+    def __init__(self) -> None:
         self.error = None
 
 
-@add_metaclass(ABCMeta)
-class Creator(object):
-    """A class that given a python Interpreter creates a virtual environment"""
+class Creator(ABC):
+    """A class that given a python Interpreter creates a virtual environment."""
 
-    def __init__(self, options, interpreter):
+    def __init__(self, options: VirtualEnvOptions, interpreter: PythonInfo) -> None:
         """Construct a new virtual environment creator.
 
         :param options: the CLI option as parsed from :meth:`add_parser_arguments`
         :param interpreter: the interpreter to create virtual environment from
+
         """
         self.interpreter = interpreter
         self._debug = None
@@ -48,38 +57,68 @@ class Creator(object):
         self.pyenv_cfg = PyEnvCfg.from_folder(self.dest)
         self.app_data = options.app_data
         self.env = options.env
+        self.prompt = getattr(options, "prompt", None)
 
-    def __repr__(self):
-        return ensure_str(self.__unicode__())
+    if TYPE_CHECKING:
 
-    def __unicode__(self):
-        return "{}({})".format(self.__class__.__name__, ", ".join("{}={}".format(k, v) for k, v in self._args()))
+        @property
+        def exe(self) -> Path: ...
 
-    def _args(self):
+        @property
+        def env_name(self) -> str: ...
+
+        @property
+        def bin_dir(self) -> Path: ...
+
+        @property
+        def script_dir(self) -> Path: ...
+
+        @property
+        def libs(self) -> list[Path]: ...
+
+        @property
+        def purelib(self) -> Path: ...
+
+        @property
+        def platlib(self) -> Path: ...
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({', '.join(f'{k}={v}' for k, v in self._args())})"
+
+    def _args(self) -> list[tuple[str, Any]]:
         return [
-            ("dest", ensure_text(str(self.dest))),
+            ("dest", str(self.dest)),
             ("clear", self.clear),
             ("no_vcs_ignore", self.no_vcs_ignore),
         ]
 
     @classmethod
-    def can_create(cls, interpreter):
+    def can_create(cls, interpreter: PythonInfo) -> CreatorMeta | bool | None:  # ruff:ignore[unused-class-method-argument]
         """Determine if we can create a virtual environment.
 
         :param interpreter: the interpreter in question
-        :return: ``None`` if we can't create, any other object otherwise that will be forwarded to \
-                  :meth:`add_parser_arguments`
+
+        :returns: ``None`` if we can't create, any other object otherwise that will be forwarded to
+            :meth:`add_parser_arguments`
+
         """
         return True
 
     @classmethod
-    def add_parser_arguments(cls, parser, interpreter, meta, app_data):
+    def add_parser_arguments(
+        cls,
+        parser: ArgumentParser,
+        interpreter: PythonInfo,  # ruff:ignore[unused-class-method-argument]
+        meta: CreatorMeta,  # ruff:ignore[unused-class-method-argument]
+        app_data: AppData,  # ruff:ignore[unused-class-method-argument]
+    ) -> None:
         """Add CLI arguments for the creator.
 
         :param parser: the CLI parser
         :param app_data: the application data folder
         :param interpreter: the interpreter we're asked to create virtual environment for
         :param meta: value as returned by :meth:`can_create`
+
         """
         parser.add_argument(
             "dest",
@@ -102,97 +141,103 @@ class Creator(object):
         )
 
     @abstractmethod
-    def create(self):
+    def create(self) -> None:
         """Perform the virtual environment creation."""
         raise NotImplementedError
 
     @classmethod
-    def validate_dest(cls, raw_value):
-        """No path separator in the path, valid chars and must be write-able"""
+    def validate_dest(cls, raw_value: str) -> str:  # ruff:ignore[complex-structure]
+        """No path separator in the path, valid chars and must be write-able."""
 
-        def non_write_able(dest, value):
-            common = Path(*os.path.commonprefix([value.parts, dest.parts]))
-            raise ArgumentTypeError(
-                "the destination {} is not write-able at {}".format(dest.relative_to(common), common),
-            )
+        def non_write_able(dest: Path, value: Path) -> NoReturn:
+            common = Path(commonpath([str(value), str(dest)]))
+            msg = f"the destination {dest.relative_to(common)} is not write-able at {common}"
+            raise ArgumentTypeError(msg)
 
         # the file system must be able to encode
         # note in newer CPython this is always utf-8 https://www.python.org/dev/peps/pep-0529/
         encoding = sys.getfilesystemencoding()
         refused = OrderedDict()
         kwargs = {"errors": "ignore"} if encoding != "mbcs" else {}
-        for char in ensure_text(raw_value):
+        for char in str(raw_value):
             try:
                 trip = char.encode(encoding, **kwargs).decode(encoding)
                 if trip == char:
                     continue
-                raise ValueError(trip)
+                raise ValueError(trip)  # ruff:ignore[raise-within-try]
             except ValueError:
                 refused[char] = None
         if refused:
-            raise ArgumentTypeError(
-                "the file system codec ({}) cannot handle characters {!r} within {!r}".format(
-                    encoding,
-                    "".join(refused.keys()),
-                    raw_value,
-                ),
-            )
+            bad = "".join(refused.keys())
+            msg = f"the file system codec ({encoding}) cannot handle characters {bad!r} within {raw_value!r}"
+            raise ArgumentTypeError(msg)
         if os.pathsep in raw_value:
-            raise ArgumentTypeError(
-                "destination {!r} must not contain the path separator ({}) as this would break "
-                "the activation scripts".format(raw_value, os.pathsep),
+            msg = (
+                f"destination {raw_value!r} must not contain the path separator ({os.pathsep})"
+                f" as this would break the activation scripts"
             )
+            raise ArgumentTypeError(msg)
 
         value = Path(raw_value)
         if value.exists() and value.is_file():
-            raise ArgumentTypeError("the destination {} already exists and is a file".format(value))
-        if (3, 3) <= sys.version_info <= (3, 6):
-            # pre 3.6 resolve is always strict, aka must exists, sidestep by using os.path operation
-            dest = Path(os.path.realpath(raw_value))
-        else:
-            dest = Path(os.path.abspath(str(value))).resolve()  # on Windows absolute does not imply resolve so use both
+            msg = f"the destination {value} already exists and is a file"
+            raise ArgumentTypeError(msg)
+        dest = Path(os.path.abspath(str(value))).resolve()  # on Windows absolute does not imply resolve so use both
         value = dest
         while dest:
             if dest.exists():
-                if os.access(ensure_text(str(dest)), os.W_OK):
+                if os.access(str(dest), os.W_OK):
                     break
-                else:
-                    non_write_able(dest, value)
+                non_write_able(dest, value)
             base, _ = dest.parent, dest.name
             if base == dest:
                 non_write_able(dest, value)  # pragma: no cover
             dest = base
         return str(value)
 
-    def run(self):
+    def run(self) -> None:
         if self.dest.exists() and self.clear:
-            logging.debug("delete %s", self.dest)
+            LOGGER.debug("delete %s", self.dest)
             safe_delete(self.dest)
         self.create()
+        self.add_cachedir_tag()
         self.set_pyenv_cfg()
         if not self.no_vcs_ignore:
             self.setup_ignore_vcs()
 
-    def set_pyenv_cfg(self):
+    def add_cachedir_tag(self) -> None:
+        """Generate a file indicating that this is not meant to be backed up."""
+        cachedir_tag_file = self.dest / "CACHEDIR.TAG"
+        if not cachedir_tag_file.exists():
+            cachedir_tag_text = textwrap.dedent("""
+                Signature: 8a477f597d28d172789f06886806bc55
+                # This file is a cache directory tag created by Python virtualenv.
+                # For information about cache directory tags, see:
+                #   https://bford.info/cachedir/
+            """).strip()
+            cachedir_tag_file.write_text(cachedir_tag_text, encoding="utf-8")
+
+    def set_pyenv_cfg(self) -> None:
         self.pyenv_cfg.content = OrderedDict()
-        self.pyenv_cfg["home"] = self.interpreter.system_exec_prefix
+        system_executable = self.interpreter.system_executable or self.interpreter.executable
+        assert system_executable is not None  # ruff:ignore[assert]
+        self.pyenv_cfg["home"] = os.path.dirname(os.path.abspath(system_executable))
         self.pyenv_cfg["implementation"] = self.interpreter.implementation
         self.pyenv_cfg["version_info"] = ".".join(str(i) for i in self.interpreter.version_info)
+        self.pyenv_cfg["version"] = ".".join(str(i) for i in self.interpreter.version_info[:3])
+        self.pyenv_cfg["executable"] = os.path.realpath(system_executable)
+        self.pyenv_cfg["command"] = f"{sys.executable} -m virtualenv {self.dest}"
         self.pyenv_cfg["virtualenv"] = __version__
+        if self.prompt is not None:
+            prompt_value = os.path.basename(os.getcwd()) if self.prompt == "." else self.prompt
+            self.pyenv_cfg["prompt"] = prompt_value
 
-    def setup_ignore_vcs(self):
+    def setup_ignore_vcs(self) -> None:
         """Generate ignore instructions for version control systems."""
         # mark this folder to be ignored by VCS, handle https://www.python.org/dev/peps/pep-0610/#registered-vcs
         git_ignore = self.dest / ".gitignore"
         if not git_ignore.exists():
-            git_ignore.write_text(
-                dedent(
-                    """
-                    # created by virtualenv automatically
-                    *
-                    """,
-                ).lstrip(),
-            )
+            git_ignore.write_text("# created by virtualenv automatically\n*\n", encoding="utf-8")
         # Mercurial - does not support the .hgignore file inside a subdirectory directly, but only if included via the
         # subinclude directive from root, at which point on might as well ignore the directory itself, see
         # https://www.selenic.com/mercurial/hgignore.5.html for more details
@@ -200,40 +245,51 @@ class Creator(object):
         # Subversion - does not support ignore files, requires direct manipulation with the svn tool
 
     @property
-    def debug(self):
-        """
-        :return: debug information about the virtual environment (only valid after :meth:`create` has run)
-        """
+    def debug(self) -> dict[str, Any] | None:
+        """Debug information about the virtual environment (only valid after :meth:`create` has run)."""
         if self._debug is None and self.exe is not None:
             self._debug = get_env_debug_info(self.exe, self.debug_script(), self.app_data, self.env)
         return self._debug
 
-    # noinspection PyMethodMayBeStatic
-    def debug_script(self):
+    @staticmethod
+    def debug_script() -> Path:
         return DEBUG_SCRIPT
 
 
-def get_env_debug_info(env_exe, debug_script, app_data, env):
+def get_env_debug_info(env_exe: Path, debug_script: Path, app_data: AppData, env: dict[str, str]) -> dict[str, Any]:
     env = env.copy()
-    env.pop(str("PYTHONPATH"), None)
+    env.pop("PYTHONPATH", None)
 
-    with app_data.ensure_extracted(debug_script) as debug_script:
-        cmd = [str(env_exe), str(debug_script)]
-        if WIN_CPYTHON_2:
-            cmd = [ensure_text(i) for i in cmd]
-        logging.debug(str("debug via %r"), LogCmd(cmd))
+    with app_data.ensure_extracted(debug_script) as debug_script_extracted:
+        cmd = [str(env_exe), str(debug_script_extracted)]
+        LOGGER.debug("debug via %r", LogCmd(cmd))
         code, out, err = run_cmd(cmd)
 
-    # noinspection PyBroadException
     try:
-        if code != 0:
-            result = literal_eval(out)
-        else:
-            result = json.loads(out)
-        if err:
-            result["err"] = err
-    except Exception as exception:
+        result = _parse_debug_output(code, out, err)
+    except Exception as exception:  # ruff:ignore[blind-except]
         return {"out": out, "err": err, "returncode": code, "exception": repr(exception)}
     if "sys" in result and "path" in result["sys"]:
         del result["sys"]["path"][0]
     return result
+
+
+def _parse_debug_output(code: int, out: str, err: str) -> dict[str, Any]:
+    if code != 0:
+        if out:
+            result = literal_eval(out)
+        elif code == 2 and "file" in err:  # ruff:ignore[magic-value-comparison]
+            raise OSError(err)
+        else:
+            raise Exception(err)  # ruff:ignore[raise-vanilla-class]
+    else:
+        result = json.loads(out)
+    if err:
+        result["err"] = err
+    return result
+
+
+__all__ = [
+    "Creator",
+    "CreatorMeta",
+]
